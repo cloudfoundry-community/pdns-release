@@ -1,6 +1,6 @@
 ---
+name: pdns
 blobstore:
-  provider: s3
+  provider: gcs
   options:
     bucket_name: pdns-release
-final_name: pdns
