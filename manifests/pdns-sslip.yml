@@ -1,0 +1,121 @@
+# bosh deploy -d sslip pdns-sslip.yml
+#   # make sure bosh-dns is NOT colocated in your cloud-config because the deploy will failed
+# NAMESERVER_IP=$(bosh -d sslip is --json | jq -r ".Tables[0].Rows[0].ips")
+# dig +short 127.0.0.1.example.com @$NAMESERVER_IP
+---
+name: sslip
+
+releases:
+- name: pdns
+  version: latest
+
+stemcells:
+- alias: ubuntu
+  os: ubuntu-xenial
+  version: latest
+
+instance_groups:
+- name: pdns
+  instances: 1
+  azs: [ vsphere ]
+  vm_type: small
+  persistent_disk_type: default
+  stemcell: ubuntu
+  networks:
+  - name: vsphere-guest
+  jobs:
+  - name: pdns
+    release: pdns
+    properties:
+      pdns_conf: |
+        launch=pipe
+        pipe-command=/var/vcap/jobs/pdns/bin/pipe /var/vcap/jobs/pdns/etc/pipe.conf
+        local-ipv6=
+      pipe: "#!/usr/bin/env bash\n#\n# Originally written by Sam Stephenson for xip.io\nset
+        -e\nshopt -s nocasematch\n\n# Configuration\n#\n# Increment this timestamp
+        when the contents of the file change.\nXIP_TIMESTAMP=\"2018092000\"\n\n# The
+        top-level domain for which the name server is authoritative.\n# CHANGEME:
+        change \"sslip.io\" to your domain\nXIP_DOMAIN=\"sslip.io\"\n\n# How long
+        responses should be cached, in seconds.\nXIP_TTL=300\n\n# SOA record\nXIP_SOA=\"briancunnie.gmail.com
+        ns-he.nono.io $XIP_TIMESTAMP $XIP_TTL $XIP_TTL $XIP_TTL $XIP_TTL\"\n\n# The
+        public IP addresses (e.g. for the web site) of the top-level domain.\n# `A`
+        queries for the top-level domain will return this list of addresses.\n# CHANGEME:
+        change this to your domain's webserver's address\nXIP_ROOT_ADDRESSES=( \"78.46.204.247\"
+        )\nXIP_ROOT_ADDRESSES_AAAA=( \"2a01:4f8:c17:b8f::2\" )\n\n# The public IP
+        addresses on which this xip-pdns server will run.\n# `NS` queries for the
+        top-level domain will return this list of servers.\n# Note: [change from xip.io]
+        The NS servers are in a different domain\n# (i.e. nono.io) so the addresses
+        don't need to be included.\nXIP_NS=(           \"ns-aws.nono.io\" \"ns-azure.nono.io\"
+        \"ns-gce.nono.io\" )\n\n# These are the MX records for your domain.  IF YOU'RE
+        NOT SURE,\n# don't set it at at all (comment it out)--it defaults to no\n#
+        MX records.\n# XIP_MX_RECORDS=(\n#   \"10\"  \"mx.zoho.com\"\n#   \"20\"  \"mx2.zoho.com\"\n#
+        )\nXIP_MX_RECORDS=(\n  \"10\"\t\"mail.protonmail.ch\"\n)\n\n# These are the
+        TXT records for your domain.  IF YOU'RE NOT SURE,\n# don't set it at at all
+        (comment it out)--it defaults to no\nXIP_TXT_RECORDS=(\n  \"protonmail-verification=ce0ca3f5010aa7a2cf8bcc693778338ffde73e26\"\n)\n\n#
+        These are the domains which we should not reply with any records\n# at all.
+        Normally this can be emtpy. The only purpose this variable\n# serves is in
+        the case of multiple PowerDNS backends, in this case\n# the BIND backend.
+        It shouldn't return any records for these domains,\n# otherwise it can break
+        CNAME/wildcard records for which the BIND\n# backend is authoritative.\nXIP_EXCLUDED_DOMAINS=(\n
+        \ \"nono.io\"\n  \"nono.com\"\n)\n\nif [ -a \"$1\" ]; then\n  source \"$1\"\nfi\n\n#\n#
+        Protocol helpers\n#\nread_cmd() {\n  local IFS=$'\\t'\n  local i=0\n  local
+        arg\n\n  read -ra CMD\n  for arg; do\n    eval \"$arg=\\\"\\${CMD[$i]}\\\"\"\n
+        \   let i=i+1\n  done\n}\n\nsend_cmd() {\n  local IFS=$'\\t'\n  printf \"%s\\n\"
+        \"$*\"\n}\n\nfail() {\n  send_cmd \"FAIL\"\n  log \"Exiting\"\n  exit 1\n}\n\nread_helo()
+        {\n  read_cmd HELO VERSION\n  [ \"$HELO\" = \"HELO\" ] && [ \"$VERSION\" =
+        \"1\" ]\n}\n\nread_query() {\n  read_cmd TYPE QNAME QCLASS QTYPE ID IP\n}\n\nsend_answer()
+        {\n  local type=\"$1\"\n  shift\n  send_cmd \"DATA\" \"$QNAME\" \"$QCLASS\"
+        \"$type\" \"$XIP_TTL\" \"$ID\" \"$@\"\n}\n\nlog() {\n  printf \"[xip-pdns:$$]
+        %s\\n\" \"$@\" >&2\n}\n\n\n#\n# xip.io domain helpers\n#\nIP_PATTERN=\"(^|\\.)(x{0}(x{0}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))($|\\.)\"\nDASHED_IP_PATTERN=\"(^|-|\\.)(x{0}(x{0}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)-){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))($|-|\\.)\"\n#
+        https://stackoverflow.com/questions/53497/regular-expression-that-matches-valid-ipv6-addresses\n#
+        We don't use \"dotted\" IPv6 because DNS doesn't allow two dots next to each
+        other\n#   e.g. \"::1\" -> \"1..sslip.io\" isn't allowed (dig error: `is not
+        a legal name (empty label)`)\nDASHED_IPV6_PATTERN=\"(^|\\.)(x{0}([0-9a-fA-F]{1,4}-){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}-){1,7}-|([0-9a-fA-F]{1,4}-){1,6}-[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}-){1,5}(-[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}-){1,4}(-[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}-){1,3}(-[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}-){1,2}(-[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}-(x{0}(-[0-9a-fA-F]{1,4}){1,6})|-(x{0}(-[0-9a-fA-F]{1,4}){1,7}|-))(\\.|$)\"\n\nqtype_is()
+        {\n  [ \"$QTYPE\" = \"$1\" ] || [ \"$QTYPE\" = \"ANY\" ]\n}\n\nqname_is_root_domain()
+        {\n  [ \"$QNAME\" = \"$XIP_DOMAIN\" ]\n}\n\nsubdomain_is_ip() {\n  [[ \"$QNAME\"
+        =~ $IP_PATTERN ]]\n}\n\nsubdomain_is_dashed_ip() {\n  [[ \"$QNAME\" =~ $DASHED_IP_PATTERN
+        ]]\n}\n\nsubdomain_is_dashed_ipv6() {\n  [[ \"$QNAME\" =~ $DASHED_IPV6_PATTERN
+        ]]\n}\n\nresolve_ip_subdomain() {\n  [[ \"$QNAME\" =~ $IP_PATTERN ]] || true\n
+        \ echo \"${BASH_REMATCH[2]}\"\n}\n\nresolve_dashed_ip_subdomain() {\n  [[
+        \"$QNAME\" =~ $DASHED_IP_PATTERN ]] || true\n  echo \"${BASH_REMATCH[2]//-/.}\"\n}\n\nresolve_dashed_ipv6_subdomain()
+        {\n  [[ \"$QNAME\" =~ $DASHED_IPV6_PATTERN ]] || true\n  echo \"${BASH_REMATCH[2]//-/:}\"\n}\n\nanswer_soa_query()
+        {\n  send_answer \"SOA\" \"$XIP_SOA\"\n}\n\nanswer_ns_query() {\n  local i=1\n
+        \ local ns_address\n  for ns in \"${XIP_NS[@]}\"; do\n    send_answer \"NS\"
+        \"$ns\"\n  done\n}\n\nanswer_root_a_query() {\n  local address\n  for address
+        in \"${XIP_ROOT_ADDRESSES[@]}\"; do\n    send_answer \"A\" \"$address\"\n
+        \ done\n}\n\nanswer_root_aaaa_query() {\n  local address\n  for address in
+        \"${XIP_ROOT_ADDRESSES_AAAA[@]}\"; do\n    send_answer \"AAAA\" \"$address\"\n
+        \ done\n}\n\nanswer_localhost_a_query() {\n  send_answer \"A\" \"127.0.0.1\"\n}\n\nanswer_localhost_aaaa_query()
+        {\n  send_answer \"AAAA\" \"::1\"\n}\n\nanswer_mx_query() {\n  set -- \"${XIP_MX_RECORDS[@]}\"\n
+        \ while [ $# -gt 1 ]; do\n    send_answer \"MX\" \"$1\t$2\"\n  shift 2\n  done\n}\n\nanswer_txt_query()
+        {\n  local address\n  for text in \"${XIP_TXT_RECORDS[@]}\"; do\n    send_answer
+        \"TXT\" \"$text\"\n  done\n}\n\nanswer_subdomain_a_query_for() {\n  local
+        type=\"$1\"\n  local address=\"$(resolve_${type}_subdomain)\"\n  if [ -n \"$address\"
+        ]; then\n    send_answer \"A\" \"$address\"\n  fi\n}\n\nanswer_subdomain_aaaa_query_for()
+        {\n  local type=\"$1\"\n  local address=\"$(resolve_${type}_subdomain)\"\n
+        \ if [ -n \"$address\" ]; then\n    send_answer \"AAAA\" \"$address\"\n  fi\n}\n\n\n#\n#
+        PowerDNS pipe backend implementation\n#\ntrap fail err\nread_helo\nsend_cmd
+        \"OK\" \"xip.io PowerDNS pipe backend (protocol version 1)\"\n\nwhile read_query;
+        do\n  log \"Query: type=$TYPE qname=$QNAME qclass=$QCLASS qtype=$QTYPE id=$ID
+        ip=$IP\"\n\n  for excluded_domain in \"${XIP_EXCLUDED_DOMAINS[@]}\"; do\n
+        \   if [[ $QNAME =~ $excluded_domain$ ]]; then\n      log \"'$QNAME' matched
+        '$excluded_domain'\"\n      send_cmd \"END\"\n      continue 2\n    fi\n  done\n\n
+        \ if qtype_is \"SOA\"; then\n    answer_soa_query\n  fi\n  if qtype_is \"NS\";
+        then\n    answer_ns_query\n  fi\n  if qtype_is \"TXT\"; then\n    answer_txt_query\n
+        \ fi\n  if qtype_is \"MX\"; then\n    answer_mx_query\n  fi\n  if qtype_is
+        \"A\"; then\n    LC_QNAME=$(echo $QNAME | tr 'A-Z' 'a-z')\n    if [ $LC_QNAME
+        == $XIP_DOMAIN ]; then\n      answer_root_a_query\n    else\n      if [ $LC_QNAME
+        == \"localhost.$XIP_DOMAIN\" ]; then\n        answer_localhost_a_query\n      elif
+        subdomain_is_dashed_ip; then\n        answer_subdomain_a_query_for dashed_ip\n
+        \     elif subdomain_is_ip; then\n        answer_subdomain_a_query_for ip\n
+        \     fi\n    fi\n  fi\n\n  if qtype_is \"AAAA\"; then\n    LC_QNAME=$(echo
+        $QNAME | tr 'A-Z' 'a-z')\n    if [ $LC_QNAME == $XIP_DOMAIN ]; then\n      answer_root_aaaa_query\n
+        \   elif [ $LC_QNAME == \"localhost.$XIP_DOMAIN\" ]; then\n        answer_localhost_aaaa_query\n
+        \   elif subdomain_is_dashed_ipv6; then\n        answer_subdomain_aaaa_query_for
+        dashed_ipv6\n    fi\n  fi\n\n  send_cmd \"END\"\ndone\n"
+update:
+  canaries: 1
+  max_in_flight: 10
+  serial: false
+  canary_watch_time: 1000-60000
+  update_watch_time: 1000-60000
