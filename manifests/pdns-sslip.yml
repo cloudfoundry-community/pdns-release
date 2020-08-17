@@ -7,7 +7,9 @@ name: sslip
 
 releases:
 - name: pdns
-  version: latest
+  sha1: 8f8ffb60682541186670f07df397113dbcbba6ab
+  url: https://github.com/cloudfoundry-community/pdns-release/releases/download/4.2.2/pdns-release-4.2.2.tgz
+  version: 4.2.2
 
 stemcells:
 - alias: ubuntu
